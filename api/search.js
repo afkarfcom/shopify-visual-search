@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-  // CORS Header agar tema Shopify bisa memanggil API
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -14,8 +13,16 @@ export default async function handler(req, res) {
     const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // 1. Panggil Gemini 1.5 Flash via REST API Resmi (Super Cepat, Tanpa Package)
+    // 1. Minta Gemini fokus pada 1-2 kata benda esensial
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const prompt = `Analisis foto ini untuk toko Home Basket Bali (fokus kategori: basket, bag, tray, placemat, cushion, decor, rattan).
+    Kembalikan HANYA 1 atau maksimal 2 kata benda paling umum dalam bahasa Inggris yang menggambarkan jenis barang ini.
+    JANGAN ada kata sifat berlebihan.
+    Contoh jika tas: bag
+    Contoh jika keranjang: basket
+    Contoh jika tatakan meja: placemat
+    DILARANG LEBIH DARI 2 KATA.`;
 
     const geminiRes = await fetch(geminiUrl, {
       method: 'POST',
@@ -24,15 +31,8 @@ export default async function handler(req, res) {
         contents: [
           {
             parts: [
-              {
-                text: "Analisis produk ini untuk toko homeware, dekorasi rumah, dan fashion. Kembalikan HANYA 2 atau 3 kata kunci pencarian paling akurat dalam bahasa inggris atau indonesia (misal nama barang, material, atau warna). DILARANG membuat kalimat panjang. Contoh: rattan basket atau ceramic vase atau placemat"
-              },
-              {
-                inline_data: {
-                  mime_type: "image/jpeg",
-                  data: base64Data
-                }
-              }
+              { text: prompt },
+              { inline_data: { mime_type: "image/jpeg", data: base64Data } }
             ]
           }
         ]
@@ -40,16 +40,32 @@ export default async function handler(req, res) {
     });
 
     const geminiData = await geminiRes.json();
-    const searchQuery = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().replace(/['"\n\r]/g, '') || '';
+    let searchQuery = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase().replace(/[^a-zA-Z0-9 ]/g, '') || '';
 
-    // 2. Cari langsung produk di katalog Home Basket (Tanpa perlu token)
-    const searchUrl = `https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(searchQuery)}&resources[type]=product&resources[limit]=6`;
-    
-    const shopifyRes = await fetch(searchUrl);
-    const shopifyData = await shopifyRes.json();
-    const rawProducts = shopifyData.resources?.results?.products || [];
+    // 2. Pencarian Pertama (Query Lengkap)
+    let searchUrl = `https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(searchQuery)}&resources[type]=product&resources[limit]=6`;
+    let shopifyRes = await fetch(searchUrl);
+    let shopifyData = await shopifyRes.json();
+    let rawProducts = shopifyData.resources?.results?.products || [];
 
-    // 3. Susun data produk yang ditemukan
+    // 3. Fallback Cerdas: Jika 0 hasil, pecah kata dan cari kata kuncinya satu per satu
+    if (rawProducts.length === 0 && searchQuery.includes(' ')) {
+      const words = searchQuery.split(' ');
+      for (const word of words) {
+        if (word.length >= 3) {
+          const fallbackRes = await fetch(`https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(word)}&resources[type]=product&resources[limit]=6`);
+          const fallbackData = await fallbackRes.json();
+          const fallbackProducts = fallbackData.resources?.results?.products || [];
+          if (fallbackProducts.length > 0) {
+            rawProducts = fallbackProducts;
+            searchQuery = word; // perbarui kata kunci yang berhasil
+            break;
+          }
+        }
+      }
+    }
+
+    // 4. Susun data produk yang ditemukan
     const formattedProducts = rawProducts.map(p => ({
       id: p.id,
       title: p.title,
@@ -59,7 +75,7 @@ export default async function handler(req, res) {
         style: 'currency',
         currency: 'IDR'
       }).format(p.price),
-      score: 0.96
+      score: 0.98
     }));
 
     return res.status(200).json({
