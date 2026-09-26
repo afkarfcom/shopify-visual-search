@@ -1,0 +1,7 @@
+{
+  "name": "shopify-visual-search",
+  "version": "1.0.0",
+  "dependencies": {
+    "@google/genai": "^0.1.1"
+  }
+}
