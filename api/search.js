@@ -19,12 +19,10 @@ export default async function handler(req, res) {
       'Accept': 'application/json'
     };
 
-    // =========================================================================
-    // LANGKAH 1: Deteksi Kategori Utama untuk Menarik Produk Nyata dari Toko
-    // =========================================================================
-    const categoryPrompt = `Look at this product photo. Identify the broad category in 1 word only: 
+    // 1. Deteksi Kategori Cepat
+    const catPrompt = `Look at this product photo. Identify the broad category in 1 word only: 
     bag, basket, vase, pottery, tray, placemat, cushion, mirror, or decor.
-    Output ONLY that single word.`;
+    Output ONLY that single word in lowercase.`;
 
     const catRes = await fetch(geminiUrl, {
       method: 'POST',
@@ -32,7 +30,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         contents: [{
           parts: [
-            { text: categoryPrompt },
+            { text: catPrompt },
             { inline_data: { mime_type: "image/jpeg", data: base64Data } }
           ]
         }]
@@ -42,15 +40,12 @@ export default async function handler(req, res) {
     const catData = await catRes.json();
     const broadCategory = catData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase().replace(/[^a-z]/g, '') || 'pottery';
 
-    // =========================================================================
-    // LANGKAH 2: Ambil Daftar Produk Nyata dari Katalog Home Basket Bali
-    // =========================================================================
+    // 2. Ambil Live Catalog dari Toko Home Basket
     let catalogUrl = `https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(broadCategory)}&resources[type]=product&resources[limit]=20`;
     let shopifyRes = await fetch(catalogUrl, { headers: browserHeaders });
     let shopifyData = await shopifyRes.json();
     let realProducts = shopifyData.resources?.results?.products || [];
 
-    // Jika kategori terlalu spesifik dan kosong, ambil produk terpopuler
     if (realProducts.length === 0) {
       catalogUrl = `https://homebasketbali.com/search/suggest.json?q=rattan&resources[type]=product&resources[limit]=20`;
       shopifyRes = await fetch(catalogUrl, { headers: browserHeaders });
@@ -58,12 +53,9 @@ export default async function handler(req, res) {
       realProducts = shopifyData.resources?.results?.products || [];
     }
 
-    // Susun daftar judul produk yang ADA di toko
     const productTitles = realProducts.map((p, index) => `${index + 1}. ${p.title}`).join('\n');
 
-    // =========================================================================
-    // LANGKAH 3: AI Membaca Daftar Produk dan Memilih Nama Barang yang Presisi
-    // =========================================================================
+    // 3. AI Memilih Nama Persis dari Katalog Toko
     const matchPrompt = `You are the product catalog expert for Home Basket Bali.
 Look at the user's uploaded photo carefully.
 Here is the ACTUAL list of products available in the store:
@@ -75,9 +67,8 @@ TASK:
 Which product from the list above is the EXACT match or the closest visual match to the item in the photo?
 
 STRICT RULES:
-1. Return ONLY the exact product title from the list above (do not modify the words, do not include the number).
-2. If none of them match, return the 2 most distinct words describing the item.
-3. No explanation, no punctuation, no extra words.`;
+1. Return ONLY the exact product title from the list above.
+2. No numbers, no explanation, no quotes.`;
 
     const matchRes = await fetch(geminiUrl, {
       method: 'POST',
@@ -93,13 +84,20 @@ STRICT RULES:
     });
 
     const matchData = await matchRes.json();
-    let preciseTitle = matchData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().replace(/['"\n\r]/g, '') || broadCategory;
+    let preciseTitle = matchData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || broadCategory;
+    preciseTitle = preciseTitle.replace(/^\d+[\.\)]\s*/, '').replace(/['"\n\r]/g, '');
 
-    // Bersihkan jika ada nomor di awal (misal: "1. MINI POTTERY...")
-    preciseTitle = preciseTitle.replace(/^\d+[\.\)]\s*/, '');
+    // Cari objek produk asli untuk mendapatkan URL langsungnya
+    const matchedProduct = realProducts.find(p => 
+      p.title.toLowerCase().trim() === preciseTitle.toLowerCase().trim()
+    );
+
+    // KUNCI UTAMA: Bungkus nama produk dengan tanda petik dua ("...") agar Shopify mencari EXACT PHRASE!
+    const exactSearchQuery = `"${matchedProduct ? matchedProduct.title : preciseTitle}"`;
 
     return res.status(200).json({
-      keywords: preciseTitle
+      keywords: exactSearchQuery,
+      product_url: matchedProduct ? matchedProduct.url : null
     });
 
   } catch (error) {
