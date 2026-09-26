@@ -1,0 +1,1 @@
+# shopify-visual-search
