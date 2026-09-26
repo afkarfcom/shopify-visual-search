@@ -1,9 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 export default async function handler(req, res) {
-  // Atur CORS agar toko Anda bisa memanggil API ini
+  // CORS Header agar tema Shopify bisa memanggil API
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -16,36 +12,44 @@ export default async function handler(req, res) {
 
   try {
     const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    // 1. Minta Gemini mengekstrak kata kunci produk dari foto (hanya 2-3 kata kunci penting)
-    const prompt = `Analisis produk ini untuk pencarian e-commerce homeware/fashion/decor. 
-    Kembalikan HANYA 2 atau 3 kata kunci pencarian paling akurat (nama barang, bahan, atau warna).
-    DILARANG membuat kalimat atau tanda baca. 
-    Contoh: basket rattan atau ceramic vase atau cushion cover`;
+    // 1. Panggil Gemini 1.5 Flash via REST API Resmi (Super Cepat, Tanpa Package)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-    const geminiResponse = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: 'image/jpeg', data: base64Data } }
-          ]
-        }
-      ]
+    const geminiRes = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: "Analisis produk ini untuk toko homeware, dekorasi rumah, dan fashion. Kembalikan HANYA 2 atau 3 kata kunci pencarian paling akurat dalam bahasa inggris atau indonesia (misal nama barang, material, atau warna). DILARANG membuat kalimat panjang. Contoh: rattan basket atau ceramic vase atau placemat"
+              },
+              {
+                inline_data: {
+                  mime_type: "image/jpeg",
+                  data: base64Data
+                }
+              }
+            ]
+          }
+        ]
+      })
     });
 
-    const searchQuery = geminiResponse.text.trim().replace(/['"\n\r]/g, '');
+    const geminiData = await geminiRes.json();
+    const searchQuery = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().replace(/['"\n\r]/g, '') || '';
 
-    // 2. Cari langsung ke toko Home Basket TANPA butuh token!
+    // 2. Cari langsung produk di katalog Home Basket (Tanpa perlu token)
     const searchUrl = `https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(searchQuery)}&resources[type]=product&resources[limit]=6`;
     
     const shopifyRes = await fetch(searchUrl);
     const shopifyData = await shopifyRes.json();
     const rawProducts = shopifyData.resources?.results?.products || [];
 
-    // 3. Susun data untuk dikirim balik ke modal di toko
+    // 3. Susun data produk yang ditemukan
     const formattedProducts = rawProducts.map(p => ({
       id: p.id,
       title: p.title,
