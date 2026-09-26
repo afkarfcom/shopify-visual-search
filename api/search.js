@@ -13,21 +13,30 @@ export default async function handler(req, res) {
     const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // 1. Gemini 3.8 Flash dengan Prompt Akurasi Tinggi
+    // 1. Panggil Gemini 3.8 Flash
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
 
-    const prompt = `You are a high-precision visual search AI for Home Basket Bali (homeware, crafts, pottery, bags, and rattan decor).
-Analyze this uploaded product image carefully.
-Generate 2 or 3 highly specific search terms combining:
-[Distinctive Shape, Material, or Color] + [Product Type]
+    const prompt = `You are a high-precision product identifier for Home Basket Bali (homeware, pottery, bags, and rattan craft).
+Your mission: Look at this photo and output the EXACT distinctive search keywords so the customer finds this specific item at the TOP of the search results.
 
-Rules for high accuracy:
-- If it's a ceramic/terracotta/clay vase with a specific shape (e.g. donut, jug, ribbed): use "pottery vase" or "donut vase" or "terracotta vase" (DO NOT just say "vase").
-- If it's a woven bag: use "rattan bag" or "pandan bag" or "leather bag" (DO NOT just say "bag").
-- If it's a basket: use "rattan basket" or "laundry basket" or "storage basket".
-- If it's a placemat: use "round placemat" or "rattan placemat".
+CRITICAL INSTRUCTIONS:
+1. Detect unique shapes and materials that distinguish this exact product:
+   - If it is a vase with a circular hole/ring in the middle: MUST include "donat" or "donut".
+   - If it is a traditional pitcher/jug vase: MUST include "kendi".
+   - If it is made of clay/terracotta/ceramic: MUST include "pottery".
+   - If it is water hyacinth: MUST include "eceng".
+   - If it is woven cane/rattan: MUST include "rattan".
+   - If it is pandanus leaf: MUST include "pandan".
 
-Output ONLY the 2-3 words search query in lowercase without punctuation, quotes, or markdown.`;
+2. Combine the UNIQUE FEATURE + ITEM NAME:
+   Examples of ideal queries:
+   - For a donut vase: "pottery donat"
+   - For a kendi jug: "pottery kendi"
+   - For a rattan bag: "bag rattan"
+   - For an eceng basket: "eceng jumbo" or "basket eceng"
+
+3. Output ONLY 2 or 3 words in lowercase. Put the most specific unique word first.
+DO NOT use generic words like just "vase" or "decor" alone!`;
 
     const geminiRes = await fetch(geminiUrl, {
       method: 'POST',
@@ -47,11 +56,11 @@ Output ONLY the 2-3 words search query in lowercase without punctuation, quotes,
     const geminiData = await geminiRes.json();
     let searchQuery = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase().replace(/[^a-zA-Z0-9 ]/g, '') || '';
 
-    // Jika Gemini menghasilkan lebih dari 3 kata, ambil 2 kata pertama paling relevan
-    const queryWords = searchQuery.split(/\s+/).slice(0, 3).join(' ');
+    // Ambil 2-3 kata paling spesifik
+    const cleanQuery = searchQuery.split(/\s+/).slice(0, 3).join(' ');
 
     return res.status(200).json({
-      keywords: queryWords || searchQuery
+      keywords: cleanQuery || searchQuery
     });
 
   } catch (error) {
