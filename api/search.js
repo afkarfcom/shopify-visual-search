@@ -14,80 +14,46 @@ export default async function handler(req, res) {
     const apiKey = process.env.GEMINI_API_KEY;
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
 
-    const browserHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'application/json'
-    };
+    // Prompt cerdas yang memahami katalog asli Home Basket Bali
+    const prompt = `You are an expert AI visual search engine for Home Basket Bali (homeware, pottery, bags, crafts).
+Look closely at this uploaded photo.
+Your mission is to generate the EXACT 2-word search query to find this item at the TOP of the store's search results.
 
-    // 1. Deteksi Kategori
-    const categoryPrompt = `Look at this photo. Return ONLY 1 broad category word from: bag, basket, vase, pottery, tray, placemat, cushion, mirror, decor.`;
+Catalog Naming Rules of Home Basket Bali:
+1. POTTERY / CERAMICS:
+   - If the pottery/vase has a circular donut-like hole in the middle: MUST return "pottery donat"
+   - If the pottery has a jug/pitcher/kendi neck: MUST return "pottery kendi"
+   - If it is other pottery/terracotta/clay vases: return "mini pottery" or "pottery vase"
+2. BAGS / CRAFTS:
+   - If it is a rattan woven bag: return "bag rattan"
+   - If it is a pandan leaf bag: return "bag pandan"
+   - If it is water hyacinth vase/basket: return "vase eceng" or "basket eceng"
+3. BASKETS:
+   - Return "basket rattan" or "storage basket"
 
-    const catRes = await fetch(geminiUrl, {
+Return ONLY the 2 or 3 most accurate search words in lowercase. No quotes, no markdown, no explanation.`;
+
+    const geminiRes = await fetch(geminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{
           parts: [
-            { text: categoryPrompt },
+            { text: prompt },
             { inline_data: { mime_type: "image/jpeg", data: base64Data } }
           ]
         }]
       })
     });
 
-    const catData = await catRes.json();
-    const broadCategory = catData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase().replace(/[^a-z]/g, '') || 'pottery';
+    const geminiData = await geminiRes.json();
+    let searchQuery = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase().replace(/[^a-zA-Z0-9 ]/g, '') || 'pottery';
 
-    // 2. Ambil Live Catalog dari Toko
-    let catalogUrl = `https://homebasketbali.com/search/suggest.json?q=${encodeURIComponent(broadCategory)}&resources[type]=product&resources[limit]=25`;
-    let shopifyRes = await fetch(catalogUrl, { headers: browserHeaders });
-    let shopifyData = await shopifyRes.json();
-    let realProducts = shopifyData.resources?.results?.products || [];
-
-    if (realProducts.length === 0) {
-      catalogUrl = `https://homebasketbali.com/search/suggest.json?q=rattan&resources[type]=product&resources[limit]=25`;
-      shopifyRes = await fetch(catalogUrl, { headers: browserHeaders });
-      shopifyData = await shopifyRes.json();
-      realProducts = shopifyData.resources?.results?.products || [];
-    }
-
-    const productTitles = realProducts.map((p, index) => `${index + 1}. ${p.title}`).join('\n');
-
-    // 3. AI Memilih Produk yang Persis Sama
-    const matchPrompt = `You are a visual product matcher for Home Basket Bali.
-Look at the user's uploaded photo carefully.
-Here is the ACTUAL list of products available in the store:
----
-${productTitles}
----
-
-TASK:
-Which product from the list above is the EXACT match or the closest visual match to the item in the photo?
-Return ONLY the exact product title from the list above without number, punctuation, or explanation.`;
-
-    const matchRes = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: matchPrompt },
-            { inline_data: { mime_type: "image/jpeg", data: base64Data } }
-          ]
-        }]
-      })
-    });
-
-    const matchData = await matchRes.json();
-    let preciseTitle = matchData.candidates?.[0]?.content?.parts?.[0]?.text?.trim().replace(/['"\n\r]/g, '') || '';
-    preciseTitle = preciseTitle.replace(/^\d+[\.\)]\s*/, '');
-
-    // Cari objek produk aslinya untuk mendapatkan direct URL
-    const matchedProduct = realProducts.find(p => p.title.toLowerCase().trim() === preciseTitle.toLowerCase().trim());
+    // Ambil maksimal 2-3 kata kunci paling presisi
+    const cleanQuery = searchQuery.split(/\s+/).slice(0, 3).join(' ');
 
     return res.status(200).json({
-      keywords: preciseTitle || broadCategory,
-      product_url: matchedProduct ? matchedProduct.url : null
+      keywords: cleanQuery
     });
 
   } catch (error) {
